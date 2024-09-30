@@ -69,6 +69,7 @@ while True:
     x, y = [HAL.getPose3d().x, HAL.getPose3d().y]
     robot_cords = np.array([x, y, 1]).reshape(-1, 1)
     x_map, y_map = mapping.robot2map(robot_cords)
+
     print(f"Current coords: ({x_map}, {y_map})")
     mapping.add_keypoint(x_map, y_map)
     mapping.show()
