@@ -11,7 +11,7 @@ import cv2
 ROTATION = math.pi
 SHIFT_X = 100
 SHIFT_Y = -100
-CELL_SIZE = 7
+CELL_SIZE = 15
 
 
 class Colors(Enum):
@@ -68,6 +68,12 @@ class Cell:
     center_y: Optional[int] = None
     content: Optional[np.ndarray] = None
 
+    # Adjacent cells
+    bottom: Optional["Cell"] = None
+    top: Optional["Cell"] = None
+    left: Optional["Cell"] = None
+    right: Optional["Cell"] = None
+
     def __post_init__(self):
         if self.center_x is None:
             self.center_x = self.x0 + (CELL_SIZE // 2)
@@ -95,11 +101,14 @@ class Cell:
 
 
 class Grid:
-    _cells: list[list[Cell]] = None
+    _cells: Optional[list[list[Cell]]] = None
+    _matrix: Optional[np.ndarray] = None
 
     def load_matrix(self, matrix: np.ndarray) -> None:
+        self._matrix = matrix
         self._cells = []
 
+        # Building _cells matrix
         for grid_j, mat_j_shifted in enumerate(
             range(CELL_SIZE, matrix.shape[0], CELL_SIZE)
         ):
@@ -116,11 +125,21 @@ class Grid:
                     y0=mat_j_shifted - CELL_SIZE,
                 )
                 cell.content = matrix[
-                    cell.x0: cell.x0 + CELL_SIZE, cell.y0: cell.y0 + CELL_SIZE # noqa
+                    cell.x0 : cell.x0 + CELL_SIZE, cell.y0 : cell.y0 + CELL_SIZE  # noqa
                 ]
                 grid_row.append(cell)
             self._cells.append(grid_row)
 
+        # Updating cells with their correspondent adjacent
+        for cell in self:
+            if cell.i == 0 or cell.j == 0 or cell.i == len(self._cells[0])-1 or cell.j == len(self._cells)-1:
+                continue
+
+            cell.bottom = self[cell.i, cell.j+1]
+            cell.top = self[cell.i, cell.j-1]
+            cell.left = self[cell.i-1, cell.j]
+            cell.right = self[cell.i+1, cell.j]
+            
     def __getitem__(self, idx: tuple[int]) -> Cell | list[Cell]:
         if len(idx) != 2:
             raise ValueError("Grid only can be accesed with double index.")
@@ -131,7 +150,7 @@ class Grid:
             for cell in row:
                 yield cell
         return
-    
+
 
 # =========== Defining Coordinate Space =================
 robot_points = np.array(
@@ -150,7 +169,8 @@ mapping.define_transformation(M)
 grid = Grid()
 grid.load_matrix(mapping.map)
 for cell in grid:
-    cell.fill()
+    if cell.occupied:
+        cell.fill(Colors.RED.value)
 
 mapping.show()
 

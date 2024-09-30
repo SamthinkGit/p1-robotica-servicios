@@ -105,19 +105,21 @@ if __name__ == "__main__":
     outter_pixels = CELL_SIZE // 2
     inner_pixels = outter_pixels - 1
 
-    # for idx, cell in enumerate(grid, start=2):
-    #     mock_image[
-    #         cell.center_y - outter_pixels: cell.center_y + outter_pixels + 1,
-    #         cell.center_x - outter_pixels: cell.center_x + outter_pixels + 1,
-    #     ] = idx//2
-    #     mock_image[
-    #         cell.center_y - inner_pixels: cell.center_y + inner_pixels + 1,
-    #         cell.center_x - inner_pixels: cell.center_x + inner_pixels + 1,
-    #     ] = 0
-    #     mock_image[cell.center_y, cell.center_x] = Colors.BLACK.value
+    for idx, cell in enumerate(grid, start=2):
+        mock_image[
+            cell.center_y - outter_pixels: cell.center_y + outter_pixels + 1,
+            cell.center_x - outter_pixels: cell.center_x + outter_pixels + 1,
+        ] = idx//2
+        mock_image[
+            cell.center_y - inner_pixels: cell.center_y + inner_pixels + 1,
+            cell.center_x - inner_pixels: cell.center_x + inner_pixels + 1,
+        ] = 0
+        mock_image[cell.center_y, cell.center_x] = 5
 
     print(mock_image)
     print((0, 0) in grid[0, 0])
     print((6, 6) in grid[0, 0])
     print((7, 6) in grid[0, 0])
     print(grid[0, 0].occupied)
+    print(grid[0,0])
+    print(grid[2,0])
