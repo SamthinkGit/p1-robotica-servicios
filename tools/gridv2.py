@@ -180,7 +180,7 @@ class Grid:
             for cell in row:
                 yield cell
         return
-
+    
 
 if __name__ == "__main__":
 

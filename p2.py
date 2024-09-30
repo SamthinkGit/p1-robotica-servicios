@@ -1,6 +1,7 @@
 import GUI  # noqa
 import HAL  # noqa
-from dataclasses import dataclass
+import heapq
+from dataclasses import dataclass, field
 import numpy as np
 from typing import Optional, Iterator
 from enum import Enum
@@ -69,10 +70,11 @@ class Cell:
     content: Optional[np.ndarray] = None
 
     # Adjacent cells
-    bottom: Optional["Cell"] = None
-    top: Optional["Cell"] = None
-    left: Optional["Cell"] = None
-    right: Optional["Cell"] = None
+    bottom: Optional["Cell"] = field(default=None, repr=False)
+    top: Optional["Cell"] = field(default=None, repr=False)
+    left: Optional["Cell"] = field(default=None, repr=False)
+    right: Optional["Cell"] = field(default=None, repr=False)
+    _from: Optional["Cell"] = field(default=None, repr=False)
 
     def __post_init__(self):
         if self.center_x is None:
@@ -81,14 +83,18 @@ class Cell:
         if self.center_y is None:
             self.center_y = self.y0 + (CELL_SIZE // 2)
 
-    def fill(self, color: int = Colors.YELLOW.value):
+    def fill(self, color: int = Colors.YELLOW.value, forced: bool = False):
         for row in self.content:
             for idx, value in enumerate(row):
-                if value == Colors.WHITE.value:
+                if value == Colors.WHITE.value or forced:
                     row[idx] = color
+
+    def __hash__(self) -> int:
+        return hash((self.x0, self.y0))
+
     @property
     def occupied(self):
-        return self.content[CELL_SIZE // 2][CELL_SIZE // 2] == Colors.BLACK.value
+        return Colors.BLACK.value in self.content
 
     def __contains__(self, coords: tuple[int]):
         return (
@@ -98,9 +104,17 @@ class Cell:
             and coords[1] < self.y0 + CELL_SIZE
         )
 
+    def __lt__(self, other: "Cell") -> bool:
+        return id(self) < id(other)
+
+    def __eq__(self, other):
+        return isinstance(other, Cell) and self.x0 == other.x0 and self.y0 == other.y0
+
     @classmethod
     def distance(cls, cell_1: "Cell", cell_2: "Cell"):
-        return abs(cell_2.center_x - cell_1.center_x) + abs(cell_2.center_y - cell_1.center_y)
+        return abs(cell_2.center_x - cell_1.center_x) + abs(
+            cell_2.center_y - cell_1.center_y
+        )
 
 
 class Grid:
@@ -112,12 +126,12 @@ class Grid:
         self._cells = []
 
         # Building _cells matrix
-        for grid_j, mat_j_shifted in enumerate(
+        for grid_i, mat_j_shifted in enumerate(
             range(CELL_SIZE, matrix.shape[0], CELL_SIZE)
         ):
             grid_row = []
 
-            for grid_i, mat_i_shifted in enumerate(
+            for grid_j, mat_i_shifted in enumerate(
                 range(CELL_SIZE, matrix.shape[1], CELL_SIZE)
             ):
 
@@ -135,13 +149,57 @@ class Grid:
 
         # Updating cells with their correspondent adjacent
         for cell in self:
-            if cell.i == 0 or cell.j == 0 or cell.i == len(self._cells[0])-1 or cell.j == len(self._cells)-1:
+            if (
+                cell.i == 0
+                or cell.j == 0
+                or cell.i == len(self._cells[0]) - 1
+                or cell.j == len(self._cells) - 1
+            ):
                 continue
 
-            cell.bottom = self[cell.i, cell.j+1]
-            cell.top = self[cell.i, cell.j-1]
-            cell.left = self[cell.i-1, cell.j]
-            cell.right = self[cell.i+1, cell.j]
+            try:
+                cell.bottom = self[cell.i, cell.j + 1]
+                cell.top = self[cell.i, cell.j - 1]
+                cell.left = self[cell.i - 1, cell.j]
+                cell.right = self[cell.i + 1, cell.j]
+            except IndexError:
+                pass
+
+    def compute_path(self, source: Cell, target: Cell) -> list[Cell]:
+        queue = []
+        heapq.heappush(queue, (0, source))
+        cost = {source: 0}
+        closed_set = set()
+
+        while queue:
+            _, current = heapq.heappop(queue)
+
+            if current in closed_set:
+                continue
+
+            closed_set.add(current)
+
+            if current == target:
+                path = [current]
+                while current != source:
+                    current = current._from
+                    path.append(current)
+                path.reverse()
+                return path
+
+            for neighbor in [current.left, current.bottom, current.right, current.top]:
+                if neighbor is None or neighbor.occupied:
+                    continue
+
+                new_cost = cost[current]
+
+                if neighbor not in cost or new_cost < cost[neighbor]:
+                    cost[neighbor] = new_cost
+                    priority = new_cost + Cell.distance(neighbor, target)
+                    heapq.heappush(queue, (priority, neighbor))
+                    neighbor._from = current
+
+        return None
 
     def __getitem__(self, idx: tuple[int]) -> Cell | list[Cell]:
         if len(idx) != 2:
@@ -171,9 +229,15 @@ mapping.define_transformation(M)
 
 grid = Grid()
 grid.load_matrix(mapping.map)
-for cell in grid:
-    if cell.occupied:
-        cell.fill(Colors.RED.value)
+src = grid[5,10]
+dst = grid[5,50]
+
+path = grid.compute_path(src, dst)
+for cell in path:
+    cell.fill(Colors.YELLOW.value)
+
+src.fill(Colors.GREEN.value)
+dst.fill(Colors.RED.value)
 
 mapping.show()
 
