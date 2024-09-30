@@ -86,7 +86,6 @@ class Cell:
             for idx, value in enumerate(row):
                 if value == Colors.WHITE.value:
                     row[idx] = color
-
     @property
     def occupied(self):
         return self.content[CELL_SIZE // 2][CELL_SIZE // 2] == Colors.BLACK.value
@@ -98,6 +97,10 @@ class Cell:
             and coords[1] >= self.y0
             and coords[1] < self.y0 + CELL_SIZE
         )
+
+    @classmethod
+    def distance(cls, cell_1: "Cell", cell_2: "Cell"):
+        return abs(cell_2.center_x - cell_1.center_x) + abs(cell_2.center_y - cell_1.center_y)
 
 
 class Grid:
@@ -139,7 +142,7 @@ class Grid:
             cell.top = self[cell.i, cell.j-1]
             cell.left = self[cell.i-1, cell.j]
             cell.right = self[cell.i+1, cell.j]
-            
+
     def __getitem__(self, idx: tuple[int]) -> Cell | list[Cell]:
         if len(idx) != 2:
             raise ValueError("Grid only can be accesed with double index.")
