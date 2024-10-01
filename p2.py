@@ -14,7 +14,7 @@ SHIFT_X = 40
 SHIFT_Y = -20
 CELL_SIZE = 15
 SCALE = 108.1
-ROTATION_ACCURACY = 2
+ROTATION_ACCURACY = 1
 ROTATION_SMOOTH = 2
 NAVIGATION_SMOOTH = 0.01
 FORWARDING_ROTATION_FORCE = 0.5
@@ -28,6 +28,7 @@ class Colors(Enum):
     YELLOW: int = 130
     GREEN: int = 131
     VIOLET: int = 134
+    BLUE: int = 132
     WHITE: int = 127
 
 
@@ -255,7 +256,7 @@ class Cell:
 
     @property
     def occupied(self):
-        return Colors.BLACK.value in self.content
+        return Colors.BLACK.value in self.content or Colors.RED.value in self.content
 
     def __contains__(self, coords: tuple[int]):
         return (
@@ -326,6 +327,21 @@ class Grid:
             except IndexError:
                 pass
 
+    def dilate_walls(self):
+        for cell in self:
+            if (
+                Colors.BLACK.value in cell.content
+                or Colors.BLACK.value in cell.left.content
+                or Colors.BLACK.value in cell.right.content
+                or Colors.BLACK.value in cell.top.content
+                or Colors.BLACK.value in cell.bottom.content
+            ):
+                cell.fill(Colors.RED.value)
+
+    def get_current_cell(self, mapping: Map):
+        x, y = Navigation.get_current_map_coords(mapping)
+        return self[x // CELL_SIZE, y // CELL_SIZE]
+
     def compute_path(self, source: Cell, target: Cell) -> list[Cell]:
         queue = []
         heapq.heappush(queue, (0, source))
@@ -394,7 +410,7 @@ class Navigation:
         return
 
     @staticmethod
-    def navigateTo(
+    def navigate_to(
         mapping: Map, target_x: float, target_y: float, skip_rotation: bool = False
     ) -> Iterable:
 
@@ -424,8 +440,7 @@ class Navigation:
                 current_x, current_y, target_x, target_y
             )
 
-            mapping.add_keypoint(current_x, current_y, Colors.RED.value)
-            mapping.add_keypoint(target_x, target_y)
+            mapping.add_keypoint(target_x, target_y, Colors.VIOLET.value)
 
             error = np.sqrt(
                 (abs(target_x - current_x) ** 2) + (abs(target_y - current_y) ** 2)
@@ -445,6 +460,29 @@ class Navigation:
 
         HAL.setW(0)
         HAL.setV(0)
+        return
+
+    @staticmethod
+    def route(grid: Grid, mapping: Map, target_cell: Cell) -> Iterable:
+
+        temp_process_manager = ProcessManager()
+        current_cell = grid.get_current_cell(mapping)
+        path = grid.compute_path(current_cell, target_cell)
+        for cell in path:
+            cell.fill(Colors.GREEN.value)
+
+        idx = 0
+        while idx < len(path):
+            if temp_process_manager.running(
+                Navigation.navigate_to,
+                mapping=mapping,
+                target_x=path[idx].center_y,
+                target_y=path[idx].center_x,
+                state=idx + 1,
+            ):
+                yield
+                continue
+            idx += 1
         return
 
     @staticmethod
@@ -485,88 +523,17 @@ mapping.define_transformation(M)
 
 grid = Grid()
 grid.load_matrix(mapping.map)
-
-# src = grid[5, 10]
-# dst = grid[5, 50]
-
-# path = grid.compute_path(src, dst)
-# for cell in path:
-#     cell.fill(Colors.YELLOW.value)
-
-# src.fill(Colors.GREEN.value)
-# dst.fill(Colors.RED.value)
+grid.dilate_walls()
 
 while True:
+    pass
 
     mapping.show()
-    mapping.flush()
+    x, y = Navigation.get_current_map_coords(mapping)
+    mapping.add_keypoint(x, y, Colors.BLUE.value)
 
     if processManager.running(Navigation.wait, seconds=2, state=1):
         continue
 
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 40,
-        target_y=570,
-        state=2,
-    ):
-        continue
-
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 80,
-        target_y=570,
-        skip_rotation=True,
-        state=3,
-    ):
-        continue
-
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 120,
-        target_y=570,
-        skip_rotation=True,
-        state=4,
-    ):
-        continue
-
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 160,
-        target_y=570,
-        skip_rotation=True,
-        state=5,
-    ):
-        continue
-
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 160,
-        target_y=570 + 40,
-        skip_rotation=False,
-        state=6,
-    ):
-        continue
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 160,
-        target_y=570 + 80,
-        skip_rotation=True,
-        state=7,
-    ):
-        continue
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 160,
-        target_y=570 + 120,
-        skip_rotation=True,
-        state=8,
-    ):
+    if processManager.running(Navigation.route, grid, mapping, grid[6, 10], state=2):
         continue
