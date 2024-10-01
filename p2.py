@@ -16,9 +16,9 @@ CELL_SIZE = 15
 SCALE = 108.1
 ROTATION_ACCURACY = 2
 ROTATION_SMOOTH = 2
-NAVIGATION_SMOOTH = 0.005
-FORWARDING_ROTATION_FORCE = 0.2
-MAXIMUM_SPEED = 2
+NAVIGATION_SMOOTH = 0.01
+FORWARDING_ROTATION_FORCE = 0.5
+MAXIMUM_SPEED = 1.5
 ERROR_DISTANCE = 15
 
 
@@ -419,10 +419,10 @@ class Navigation:
         while error > ERROR_DISTANCE:
 
             current_x, current_y = Navigation.get_current_map_coords(mapping)
+            current_yaw = HAL.getPose3d().yaw
             target_yaw = Navigation._compute_yaw(
                 current_x, current_y, target_x, target_y
             )
-            current_yaw = HAL.getPose3d().yaw
 
             mapping.add_keypoint(current_x, current_y, Colors.RED.value)
             mapping.add_keypoint(target_x, target_y)
@@ -432,30 +432,14 @@ class Navigation:
             )
 
             velocity = min(error * NAVIGATION_SMOOTH, MAXIMUM_SPEED)
-            rotation = abs(target_yaw - current_yaw) / ROTATION_SMOOTH
-
-            # Case looking to the left
-            if abs(current_yaw) > np.pi:
-                if target_yaw > 0:
-                    direction = -1
-                else:
-                    direction = 1
-
-            # Case looking to the right
-            else:
-                if target_yaw > 0:
-                    direction = -1
-                else:
-                    direction = 1
-
-            rotate_vel = rotation * direction * FORWARDING_ROTATION_FORCE
+            rotation = (target_yaw - current_yaw) / ROTATION_SMOOTH
 
             print(
                 f"Going to {[target_x, target_y]} with {target_yaw} from {[current_x, current_y]}: "
-                f"{round(velocity,2)}m/s. Rot: {rotate_vel} -> [{round(error,2)}m {round(current_yaw,2)}º]"
+                f"{round(velocity,2)}m/s. Rot: {rotation} -> [{round(error,2)}m {round(current_yaw,2)}º]"
             )
 
-            HAL.setW(rotate_vel)
+            HAL.setW(rotation)
             HAL.setV(velocity)
             yield
 
@@ -571,7 +555,7 @@ while True:
     if processManager.running(
         Navigation.navigateTo,
         mapping=mapping,
-        target_x=670 + 160,
+        target_x=670 - 160,
         target_y=570 + 80,
         skip_rotation=True,
         state=7,
@@ -580,7 +564,7 @@ while True:
     if processManager.running(
         Navigation.navigateTo,
         mapping=mapping,
-        target_x=670 + 160,
+        target_x=670 - 160,
         target_y=570 + 120,
         skip_rotation=True,
         state=8,
