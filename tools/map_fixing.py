@@ -19,7 +19,7 @@ ROTATION_SMOOTH = 2
 NAVIGATION_SMOOTH = 0.005
 FORWARDING_ROTATION_FORCE = 0.2
 MAXIMUM_SPEED = 2
-ERROR_DISTANCE = 15
+ERROR_DISTANCE = 30
 
 
 class Colors(Enum):
@@ -202,7 +202,7 @@ class Map:
 
         vec = np.array([x, y, 0, 1])
         result = M @ vec * SCALE
-        return [int(result[1] - SHIFT_X), int(result[0] - SHIFT_Y)]
+        return [int(result[1]-SHIFT_X), int(result[0]-SHIFT_Y)]
 
     def flush(self):
         self.__init__(self._path)
@@ -417,11 +417,7 @@ class Navigation:
         error = float("inf")
 
         while error > ERROR_DISTANCE:
-
             current_x, current_y = Navigation.get_current_map_coords(mapping)
-            target_yaw = Navigation._compute_yaw(
-                current_x, current_y, target_x, target_y
-            )
             current_yaw = HAL.getPose3d().yaw
 
             mapping.add_keypoint(current_x, current_y, Colors.RED.value)
@@ -430,37 +426,27 @@ class Navigation:
             error = np.sqrt(
                 (abs(target_x - current_x) ** 2) + (abs(target_y - current_y) ** 2)
             )
-
             velocity = min(error * NAVIGATION_SMOOTH, MAXIMUM_SPEED)
-            rotation = abs(target_yaw - current_yaw) / ROTATION_SMOOTH
 
-            # Case looking to the left
-            if abs(current_yaw) > np.pi:
-                if target_yaw > 0:
-                    direction = -1
-                else:
-                    direction = 1
+            # Fix going to the right
+            if current_yaw < -2.90:
+                current_yaw = np.pi + 0.2
 
-            # Case looking to the right
-            else:
-                if target_yaw > 0:
-                    direction = -1
-                else:
-                    direction = 1
-
-            rotate_vel = rotation * direction * FORWARDING_ROTATION_FORCE
+            direction = -1 if target_yaw < current_yaw else 1
+            rotation = FORWARDING_ROTATION_FORCE * direction
 
             print(
-                f"Going to {[target_x, target_y]} with {target_yaw} from {[current_x, current_y]}: "
-                f"{round(velocity,2)}m/s. Rot: {rotate_vel} -> [{round(error,2)}m {round(current_yaw,2)}º]"
+                f"Going to {[target_x, target_y]} from {[current_x, current_y]}: {round(velocity,2)}m/s. Rot: {rotation} -> "
+                f"[{round(error,2)}m {round(current_yaw,2)}º]"
             )
 
-            HAL.setW(rotate_vel)
+            HAL.setW(rotation)
             HAL.setV(velocity)
             yield
 
         HAL.setW(0)
         HAL.setV(0)
+
         return
 
     @staticmethod
@@ -512,77 +498,9 @@ grid.load_matrix(mapping.map)
 # src.fill(Colors.GREEN.value)
 # dst.fill(Colors.RED.value)
 
-while True:
 
+while True:
+    x, y = Navigation.get_current_map_coords(mapping)
+    mapping.add_keypoint(x, y)
     mapping.show()
     mapping.flush()
-
-    if processManager.running(Navigation.wait, seconds=2, state=1):
-        continue
-
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 40,
-        target_y=570,
-        state=2,
-    ):
-        continue
-
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 80,
-        target_y=570,
-        skip_rotation=True,
-        state=3,
-    ):
-        continue
-
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 120,
-        target_y=570,
-        skip_rotation=True,
-        state=4,
-    ):
-        continue
-
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 160,
-        target_y=570,
-        skip_rotation=True,
-        state=5,
-    ):
-        continue
-
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 - 160,
-        target_y=570 + 40,
-        skip_rotation=False,
-        state=6,
-    ):
-        continue
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 + 160,
-        target_y=570 + 80,
-        skip_rotation=True,
-        state=7,
-    ):
-        continue
-    if processManager.running(
-        Navigation.navigateTo,
-        mapping=mapping,
-        target_x=670 + 160,
-        target_y=570 + 120,
-        skip_rotation=True,
-        state=8,
-    ):
-        continue
