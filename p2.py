@@ -16,10 +16,11 @@ CELL_SIZE = 15
 SCALE = 108.1
 ROTATION_ACCURACY = 1
 ROTATION_SMOOTH = 2
-NAVIGATION_SMOOTH = 0.01
+NAVIGATION_SMOOTH = 0.035
 FORWARDING_ROTATION_FORCE = 0.5
 MAXIMUM_SPEED = 1.5
-ERROR_DISTANCE = 15
+ERROR_DISTANCE = 50
+RECOVERY_DISTANCE = 80
 
 
 class Colors(Enum):
@@ -229,7 +230,7 @@ class Cell:
     y0: int
     center_x: Optional[int] = None
     center_y: Optional[int] = None
-    content: Optional[np.ndarray] = None
+    content: Optional[np.ndarray] = field(default=None, repr=False)
 
     # Adjacent cells
     bottom: Optional["Cell"] = field(default=None, repr=False)
@@ -237,6 +238,9 @@ class Cell:
     left: Optional["Cell"] = field(default=None, repr=False)
     right: Optional["Cell"] = field(default=None, repr=False)
     _from: Optional["Cell"] = field(default=None, repr=False)
+
+    # Cleaning specialized attributes
+    clean: bool = False
 
     def __post_init__(self):
         if self.center_x is None:
@@ -403,7 +407,7 @@ class Navigation:
 
     @staticmethod
     def wait(seconds: float) -> Iterable:
-        print(f"Waiting {seconds}s...")
+        print(f"[Wait] Sleeping {seconds}s...")
         start = time.perf_counter()
         while time.perf_counter() - start < seconds:
             yield
@@ -411,7 +415,11 @@ class Navigation:
 
     @staticmethod
     def navigate_to(
-        mapping: Map, target_x: float, target_y: float, skip_rotation: bool = False
+        mapping: Map,
+        target_x: float,
+        target_y: float,
+        skip_rotation: bool = False,
+        logging: bool = False,
     ) -> Iterable:
 
         current_x, current_y = Navigation.get_current_map_coords(mapping)
@@ -426,7 +434,10 @@ class Navigation:
                 rotation = (target_yaw - current_yaw) / ROTATION_SMOOTH
                 HAL.setW(rotation)
                 current_yaw = HAL.getPose3d().yaw
-                print(f"Rotating from [{current_yaw}] to [{target_yaw}]: {rotation}")
+                if logging:
+                    print(
+                        f"Rotating from [{current_yaw}] to [{target_yaw}]: {rotation}"
+                    )
                 yield
 
         # Forward
@@ -449,10 +460,11 @@ class Navigation:
             velocity = min(error * NAVIGATION_SMOOTH, MAXIMUM_SPEED)
             rotation = (target_yaw - current_yaw) / ROTATION_SMOOTH
 
-            print(
-                f"Going to {[target_x, target_y]} with {target_yaw} from {[current_x, current_y]}: "
-                f"{round(velocity,2)}m/s. Rot: {rotation} -> [{round(error,2)}m {round(current_yaw,2)}º]"
-            )
+            if logging:
+                print(
+                    f"Going to {[target_x, target_y]} with {target_yaw} from {[current_x, current_y]}: "
+                    f"{round(velocity,2)}m/s. Rot: {rotation} -> [{round(error,2)}m {round(current_yaw,2)}º]"
+                )
 
             HAL.setW(rotation)
             HAL.setV(velocity)
@@ -461,6 +473,14 @@ class Navigation:
         HAL.setW(0)
         HAL.setV(0)
         return
+
+    @staticmethod
+    def find_first_unclean_cell(grid: Grid):
+        for cell in grid:
+            if not cell.clean and not cell.occupied:
+                return cell
+        else:
+            return None
 
     @staticmethod
     def route(grid: Grid, mapping: Map, target_cell: Cell) -> Iterable:
@@ -498,6 +518,88 @@ class Navigation:
 
         return rad
 
+    @staticmethod
+    def bsa(grid: Grid, mapping: Map) -> Iterable:
+
+        temp_proccess_manager = ProcessManager()
+        unblocking_cell: Optional[Cell] = grid.get_current_cell(mapping)
+        blocked = False
+
+        # We select a number for incrementing the states of the proccess manager
+        # each time a new cell is selected
+        state = 0
+
+        while True:
+
+            yield
+
+            current_cell = grid.get_current_cell(mapping)
+            # Get the a valid cell if blocked:
+            if blocked:
+                unblocking_cell = Navigation.find_first_unclean_cell(grid)
+                print(
+                    f"[BSA] Found new cell at {[unblocking_cell.center_x, unblocking_cell.center_y]}"
+                )
+
+            # If there is no valid cell, exit
+            if unblocking_cell is None:
+                print("[BSA] Algorithm completed, exit.")
+                break
+
+            # Go to the start cell
+            if temp_proccess_manager.running(
+                Navigation.route, grid, mapping, unblocking_cell, state=1
+            ):
+                continue
+
+            if temp_proccess_manager.edging(state=1):
+                print("[BSA] New room reached, cleaning started.")
+                state = 1
+
+            # Select the next cell
+            if temp_proccess_manager.edging():
+
+                # Selecting cell
+                if not current_cell.left.occupied and not current_cell.left.clean:
+                    next_cell = current_cell.left
+
+                elif not current_cell.bottom.occupied and not current_cell.bottom.clean:
+                    next_cell = current_cell.bottom
+
+                elif not current_cell.right.occupied and not current_cell.right.clean:
+                    next_cell = current_cell.right
+
+                elif not current_cell.top.occupied and not current_cell.top.clean:
+                    next_cell = current_cell.top
+                else:
+                    next_cell = None
+
+                state += 1
+
+                # If there is no valid cell, you are blocked
+                if next_cell is None:
+                    print("[BSA] Room completed, searching for new rooms...")
+                    blocked = True
+                    temp_proccess_manager.flush()
+                    continue
+
+            if Cell.distance(current_cell, next_cell) > RECOVERY_DISTANCE:
+                print("[BSA] Navigation failure, starting recovery")
+                blocked = True
+                temp_proccess_manager.flush()
+
+            # Go to the next cell
+            if temp_proccess_manager.running(
+                Navigation.navigate_to,
+                mapping=mapping,
+                target_x=next_cell.center_y,
+                target_y=next_cell.center_x,
+                state=state,
+            ):
+                continue
+
+        return
+
 
 # =========== Defining Coordinate Space =================
 alpha = -1.57
@@ -514,7 +616,9 @@ M = np.array(
 )
 
 # =========== Initialization =================
-print("Starting...")
+print('\n'*10)
+print("="*30 + " BSA " + "="*30)
+
 processManager = ProcessManager()
 mapping = Map(
     "/RoboticsAcademy/exercises/static/exercises/vacuum_cleaner_loc_newmanager/resources/images/mapgrannyannie.png"
@@ -530,10 +634,13 @@ while True:
 
     mapping.show()
     x, y = Navigation.get_current_map_coords(mapping)
+    current_cell = grid.get_current_cell(mapping)
+    current_cell.clean = True
+
     mapping.add_keypoint(x, y, Colors.BLUE.value)
 
     if processManager.running(Navigation.wait, seconds=2, state=1):
         continue
 
-    if processManager.running(Navigation.route, grid, mapping, grid[6, 10], state=2):
+    if processManager.running(Navigation.bsa, grid, mapping, state=2):
         continue
