@@ -9,18 +9,22 @@ import math
 import time
 
 # =========== CONSTANTS =================
+EXACT_TRACE: bool = False
 ROTATION = math.pi
-SHIFT_X = 40
-SHIFT_Y = -20
+SHIFT_X = 15
+SHIFT_Y = -35
 CELL_SIZE = 15
-SCALE = 108.1
-ROTATION_ACCURACY = 1
-ROTATION_SMOOTH = 2
+SCALE = 104.1
+
+ROTATION_ACCURACY = 0.1
+ROTATION_SMOOTH = 0.5
 NAVIGATION_SMOOTH = 0.035
 FORWARDING_ROTATION_FORCE = 0.5
-MAXIMUM_SPEED = 1.5
-ERROR_DISTANCE = 50
+
+MAXIMUM_SPEED = 0.6
+ERROR_DISTANCE = 20
 RECOVERY_DISTANCE = 80
+RECOVERY_TIME = 10
 
 
 class Colors(Enum):
@@ -346,6 +350,9 @@ class Grid:
         x, y = Navigation.get_current_map_coords(mapping)
         return self[x // CELL_SIZE, y // CELL_SIZE]
 
+    def get_cell(self, x: int, y: int):
+        return self[x // CELL_SIZE, y // CELL_SIZE]
+
     def compute_path(self, source: Cell, target: Cell) -> list[Cell]:
         queue = []
         heapq.heappush(queue, (0, source))
@@ -412,6 +419,27 @@ class Navigation:
         while time.perf_counter() - start < seconds:
             yield
         return
+    
+    @staticmethod
+    def wait_for_hal() -> Iterable:
+        print(f"[Wait] Waiting for HAL to be active")
+        while HAL.getPose3d().x == 0:
+            yield
+        print(f"[Wait] Wait completed")
+        return
+
+    @staticmethod
+    def shortest_angle_distance_radians(a, b):
+        a = a % (2 * math.pi)
+        b = b % (2 * math.pi)
+
+        diff = b - a
+        if diff > math.pi:
+            diff -= 2 * math.pi
+        elif diff < -math.pi:
+            diff += 2 * math.pi
+
+        return diff
 
     @staticmethod
     def navigate_to(
@@ -420,18 +448,21 @@ class Navigation:
         target_y: float,
         skip_rotation: bool = False,
         logging: bool = False,
+        keypoints: bool = True,
     ) -> Iterable:
 
         current_x, current_y = Navigation.get_current_map_coords(mapping)
         current_yaw = HAL.getPose3d().yaw
         target_yaw = Navigation._compute_yaw(current_x, current_y, target_x, target_y)
+        rotation = float("inf")
 
         # Rotate
         if not skip_rotation:
-            while round(current_yaw, ROTATION_ACCURACY) != round(
-                target_yaw, ROTATION_ACCURACY
-            ):
-                rotation = (target_yaw - current_yaw) / ROTATION_SMOOTH
+            while abs(rotation) > ROTATION_ACCURACY:
+                rotation = (
+                    Navigation.shortest_angle_distance_radians(current_yaw, target_yaw)
+                    * ROTATION_SMOOTH
+                )
                 HAL.setW(rotation)
                 current_yaw = HAL.getPose3d().yaw
                 if logging:
@@ -443,6 +474,10 @@ class Navigation:
         # Forward
         error = float("inf")
 
+        if keypoints:
+            target_cell = grid.get_cell(target_x, target_y)
+            target_cell.fill(Colors.VIOLET.value, forced=True)
+
         while error > ERROR_DISTANCE:
 
             current_x, current_y = Navigation.get_current_map_coords(mapping)
@@ -451,14 +486,18 @@ class Navigation:
                 current_x, current_y, target_x, target_y
             )
 
-            mapping.add_keypoint(target_x, target_y, Colors.VIOLET.value)
 
             error = np.sqrt(
                 (abs(target_x - current_x) ** 2) + (abs(target_y - current_y) ** 2)
             )
 
             velocity = min(error * NAVIGATION_SMOOTH, MAXIMUM_SPEED)
-            rotation = (target_yaw - current_yaw) / ROTATION_SMOOTH
+            rotation = (
+                Navigation.shortest_angle_distance_radians(current_yaw, target_yaw)
+                * ROTATION_SMOOTH
+            )
+            if abs(rotation) < ROTATION_ACCURACY:
+                rotation = 0
 
             if logging:
                 print(
@@ -498,6 +537,7 @@ class Navigation:
                 mapping=mapping,
                 target_x=path[idx].center_y,
                 target_y=path[idx].center_x,
+                keypoints=False,
                 state=idx + 1,
             ):
                 yield
@@ -560,21 +600,22 @@ class Navigation:
             if temp_proccess_manager.edging():
 
                 # Selecting cell
-                if not current_cell.left.occupied and not current_cell.left.clean:
-                    next_cell = current_cell.left
-
-                elif not current_cell.bottom.occupied and not current_cell.bottom.clean:
-                    next_cell = current_cell.bottom
+                if not current_cell.top.occupied and not current_cell.top.clean:
+                    next_cell = current_cell.top
 
                 elif not current_cell.right.occupied and not current_cell.right.clean:
                     next_cell = current_cell.right
 
-                elif not current_cell.top.occupied and not current_cell.top.clean:
-                    next_cell = current_cell.top
+                elif not current_cell.bottom.occupied and not current_cell.bottom.clean:
+                    next_cell = current_cell.bottom
+
+                elif not current_cell.left.occupied and not current_cell.left.clean:
+                    next_cell = current_cell.left
                 else:
                     next_cell = None
 
                 state += 1
+                start_time = time.perf_counter()
 
                 # If there is no valid cell, you are blocked
                 if next_cell is None:
@@ -583,7 +624,10 @@ class Navigation:
                     temp_proccess_manager.flush()
                     continue
 
-            if Cell.distance(current_cell, next_cell) > RECOVERY_DISTANCE:
+            if (
+                Cell.distance(current_cell, next_cell) > RECOVERY_DISTANCE
+                or time.perf_counter() - start_time > RECOVERY_TIME
+            ):
                 print("[BSA] Navigation failure, starting recovery")
                 blocked = True
                 temp_proccess_manager.flush()
@@ -616,8 +660,8 @@ M = np.array(
 )
 
 # =========== Initialization =================
-print('\n'*10)
-print("="*30 + " BSA " + "="*30)
+print("\n" * 10)
+print("=" * 30 + " BSA " + "=" * 30)
 
 processManager = ProcessManager()
 mapping = Map(
@@ -637,10 +681,17 @@ while True:
     current_cell = grid.get_current_cell(mapping)
     current_cell.clean = True
 
-    mapping.add_keypoint(x, y, Colors.BLUE.value)
+    if EXACT_TRACE:
+        mapping.add_keypoint(x, y, Colors.BLUE.value)
+    else:
+        current_cell.fill(Colors.BLUE.value, forced=True)
 
-    if processManager.running(Navigation.wait, seconds=2, state=1):
+    if processManager.running(Navigation.wait_for_hal, state=1):
         continue
 
-    if processManager.running(Navigation.bsa, grid, mapping, state=2):
+    # Use this as an example navigation test
+    # if processManager.running(Navigation.route, grid, mapping, grid[8, 12], state=2):
+    #     continue
+
+    if processManager.running(Navigation.bsa, grid, mapping, state=3):
         continue
