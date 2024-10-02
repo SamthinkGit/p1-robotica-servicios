@@ -7,6 +7,7 @@ from typing import Optional, Iterator, Iterable, Callable
 from enum import Enum
 import math
 import time
+import random
 
 # =========== CONSTANTS =================
 EXACT_TRACE: bool = False
@@ -24,7 +25,7 @@ FORWARDING_ROTATION_FORCE = 0.5
 MAXIMUM_SPEED = 0.6
 ERROR_DISTANCE = 20
 RECOVERY_DISTANCE = 80
-RECOVERY_TIME = 10
+RECOVERY_TIME = 5
 
 
 class Colors(Enum):
@@ -522,6 +523,28 @@ class Navigation:
             return None
 
     @staticmethod
+    def find_closest_unclean_cell(grid: Grid, mapping: Map):
+        dist = float("inf")
+        current_cell = grid.get_current_cell(mapping)
+        result = None
+
+        for cell in grid:
+            if not cell.clean and not cell.occupied and Cell.distance(current_cell, cell) < dist:
+                result = cell
+        return result
+
+    @staticmethod
+    def get_unclean_cells(grid: Grid):
+        result = []
+        for cell in grid:
+            if not cell.clean and not cell.occupied:
+                result.append(cell)
+    
+        if len(result) == 0:
+            return None
+        return result
+
+    @staticmethod
     def route(grid: Grid, mapping: Map, target_cell: Cell) -> Iterable:
 
         temp_process_manager = ProcessManager()
@@ -576,7 +599,8 @@ class Navigation:
             current_cell = grid.get_current_cell(mapping)
             # Get the a valid cell if blocked:
             if blocked:
-                unblocking_cell = Navigation.find_first_unclean_cell(grid)
+                unblocking_cell = Navigation.find_closest_unclean_cell(grid, mapping)
+                start_time = time.perf_counter()
                 print(
                     f"[BSA] Found new cell at {[unblocking_cell.center_x, unblocking_cell.center_y]}"
                 )
@@ -601,11 +625,11 @@ class Navigation:
             if temp_proccess_manager.edging():
 
                 # Selecting cell
-                if not current_cell.top.occupied and not current_cell.top.clean:
-                    next_cell = current_cell.top
-
-                elif not current_cell.right.occupied and not current_cell.right.clean:
+                if not current_cell.right.occupied and not current_cell.right.clean:
                     next_cell = current_cell.right
+
+                elif not current_cell.top.occupied and not current_cell.top.clean:
+                    next_cell = current_cell.top
 
                 elif not current_cell.bottom.occupied and not current_cell.bottom.clean:
                     next_cell = current_cell.bottom
@@ -626,12 +650,14 @@ class Navigation:
                     continue
 
             if (
-                Cell.distance(current_cell, next_cell) > RECOVERY_DISTANCE
-                or time.perf_counter() - start_time > RECOVERY_TIME
+                time.perf_counter() - start_time > RECOVERY_TIME
             ):
+                start_time = time.perf_counter()
                 print("[BSA] Navigation failure, starting recovery")
                 blocked = True
                 temp_proccess_manager.flush()
+                HAL.setV(0)
+                time.sleep(1)
 
             # Go to the next cell
             if temp_proccess_manager.running(
