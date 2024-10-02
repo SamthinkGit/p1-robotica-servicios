@@ -580,6 +580,7 @@ class Navigation:
                 print(
                     f"[BSA] Found new cell at {[unblocking_cell.center_x, unblocking_cell.center_y]}"
                 )
+                blocked = False
 
             # If there is no valid cell, exit
             if unblocking_cell is None:
